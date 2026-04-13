@@ -100,6 +100,7 @@ class Term:
         if is_constant(root) or is_variable(root):
             assert arguments is None
             self.root = root
+            self.arguments = None
         else:
             assert is_function(root)
             assert arguments is not None and len(arguments) > 0
@@ -114,6 +115,10 @@ class Term:
             The standard string representation of the current term.
         """
         # Task 7.1
+        if self.arguments is None:
+            return self.root
+        else:
+            return self.root + '(' + ','.join(repr(arg) for arg in self.arguments) + ')'
 
     def __eq__(self, other: object) -> bool:
         """Compares the current term with the given one.
@@ -140,7 +145,7 @@ class Term:
         return not self == other
 
     def __hash__(self) -> int:
-        return hash(str(self))
+        return hash((self.root, self.arguments))
 
     @staticmethod
     def _parse_prefix(string: str) -> Tuple[Term, str]:
@@ -157,6 +162,32 @@ class Term:
             that entire name (and not just a part of it, such as ``'x1'``).
         """
         # Task 7.3a
+        i = 0
+        last_valid = 0
+        while i < len(string):
+            candidate = string[:i+1]
+            if is_constant(candidate) or is_variable(candidate):
+                last_valid = i+1
+            elif i+1 < len(string) and string[i+1] == '(' and is_function(candidate):
+                last_valid = i+1
+            i += 1
+        root = string[:last_valid]
+        string = string[last_valid:]
+        if not root:
+            raise ValueError("No valid term prefix")
+        if string.startswith('('):
+            arguments = []
+            string = string[1:]
+            while string and string[0] != ')':
+                arg, string = Term._parse_prefix(string)
+                arguments.append(arg)
+                if string and string[0] == ',':
+                    string = string[1:]
+            if string:
+                string = string[1:]
+            return Term(root, arguments), string
+        else:
+            return Term(root), string
 
     @staticmethod
     def parse(string: str) -> Term:
@@ -169,6 +200,9 @@ class Term:
             A term whose standard string representation is the given string.
         """
         # Task 7.3b
+        term, rest = Term._parse_prefix(string)
+        assert rest == ''
+        return term
 
     def constants(self) -> Set[str]:
         """Finds all constant names in the current term.
@@ -177,6 +211,16 @@ class Term:
             A set of all constant names used in the current term.
         """
         # Task 7.5a
+        if self.arguments is None:
+            if is_constant(self.root):
+                return {self.root}
+            else:
+                return set()
+        else:
+            s = set()
+            for arg in self.arguments:
+                s.update(arg.constants())
+            return s
 
     def variables(self) -> Set[str]:
         """Finds all variable names in the current term.
@@ -185,6 +229,16 @@ class Term:
             A set of all variable names used in the current term.
         """
         # Task 7.5b
+        if self.arguments is None:
+            if is_variable(self.root):
+                return {self.root}
+            else:
+                return set()
+        else:
+            s = set()
+            for arg in self.arguments:
+                s.update(arg.variables())
+            return s
 
     def functions(self) -> Set[Tuple[str, int]]:
         """Finds all function names in the current term, along with their
@@ -195,6 +249,13 @@ class Term:
             all function names used in the current term.
         """
         # Task 7.5c
+        if self.arguments is None:
+            return set()
+        else:
+            s = {(self.root, len(self.arguments))}
+            for arg in self.arguments:
+                s.update(arg.functions())
+            return s
 
     def substitute(self, substitution_map: Mapping[str, Term],
                    forbidden_variables: AbstractSet[str] = frozenset()) -> Term:
@@ -344,6 +405,12 @@ class Formula:
                 a binary operator; the statement to be quantified by the root,
                 if the root is a quantification.
         """
+        self.root = root
+        self.arguments = None
+        self.first = None
+        self.second = None
+        self.variable = None
+        self.statement = None
         if is_equality(root) or is_relation(root):
             # Populate self.root and self.arguments
             assert isinstance(arguments_or_first_or_variable, Sequence) and \
@@ -351,27 +418,26 @@ class Formula:
             if is_equality(root):
                 assert len(arguments_or_first_or_variable) == 2
             assert second_or_statement is None
-            self.root, self.arguments = \
-                root, tuple(arguments_or_first_or_variable)
+            self.arguments = tuple(arguments_or_first_or_variable)
         elif is_unary(root):
             # Populate self.first
             assert isinstance(arguments_or_first_or_variable, Formula)
             assert second_or_statement is None
-            self.root, self.first = root, arguments_or_first_or_variable
+            self.first = arguments_or_first_or_variable
         elif is_binary(root):
             # Populate self.first and self.second
             assert isinstance(arguments_or_first_or_variable, Formula)
             assert second_or_statement is not None
-            self.root, self.first, self.second = \
-                root, arguments_or_first_or_variable, second_or_statement
+            self.first = arguments_or_first_or_variable
+            self.second = second_or_statement
         else:
             assert is_quantifier(root)
             # Populate self.variable and self.statement
             assert isinstance(arguments_or_first_or_variable, str) and \
                    is_variable(arguments_or_first_or_variable)
             assert second_or_statement is not None
-            self.root, self.variable, self.statement = \
-                root, arguments_or_first_or_variable, second_or_statement
+            self.variable = arguments_or_first_or_variable
+            self.statement = second_or_statement
 
     @memoized_parameterless_method
     def __repr__(self) -> str:
@@ -381,6 +447,18 @@ class Formula:
             The standard string representation of the current formula.
         """
         # Task 7.2
+        if self.arguments is not None:
+            if self.root == '=':
+                return repr(self.arguments[0]) + '=' + repr(self.arguments[1])
+            else:
+                return self.root + '(' + ','.join(repr(arg) for arg in self.arguments) + ')'
+        elif self.first is not None:
+            if self.second is not None:
+                return '(' + repr(self.first) + self.root + repr(self.second) + ')'
+            else:
+                return self.root + repr(self.first)
+        else:
+            return self.root + self.variable + '[' + repr(self.statement) + ']'
 
     def __eq__(self, other: object) -> bool:
         """Compares the current formula with the given one.
@@ -407,7 +485,7 @@ class Formula:
         return not self == other
 
     def __hash__(self) -> int:
-        return hash(str(self))
+        return hash((self.root, self.arguments, self.first, self.second, self.variable, self.statement))
 
     @staticmethod
     def _parse_prefix(string: str) -> Tuple[Formula, str]:
@@ -425,6 +503,66 @@ class Formula:
             that entire name (and not just a part of it, such as ``'f(y)=x1'``).
         """
         # Task 7.4a
+        if string.startswith('~'):
+            formula, rest = Formula._parse_prefix(string[1:])
+            return Formula('~', formula), rest
+        elif string.startswith('('):
+            formula1, string = Formula._parse_prefix(string[1:])
+            if string.startswith('&') or string.startswith('|') or string.startswith('->'):
+                op = string[:2] if string.startswith('->') else string[0]
+                string = string[2:] if op == '->' else string[1:]
+                formula2, string = Formula._parse_prefix(string)
+                if string.startswith(')'):
+                    return Formula(op, formula1, formula2), string[1:]
+            else:
+                quant = string[0]
+                string = string[1:]
+                if string.startswith('['):
+                    string = string[1:]
+                    i = 0
+                    while i < len(string) and (string[i].isalnum() or string[i] == '_'):
+                        i += 1
+                    var = string[:i]
+                    string = string[i:]
+                    if string.startswith('['):
+                        formula2, string = Formula._parse_prefix(string)
+                        if string.startswith(']'):
+                            string = string[1:]
+                            if string.startswith(')'):
+                                return Formula(quant, var, formula2), string[1:]
+        else:
+            i = 0
+            while i < len(string) and string[i] not in ' (=~':
+                i += 1
+            root = string[:i]
+            string = string[i:]
+            if is_quantifier(root):
+                i = 0
+                while i < len(string) and (string[i].isalnum() or string[i] == '_'):
+                    i += 1
+                var = string[:i]
+                string = string[i:]
+                if string.startswith('['):
+                    statement, string = Formula._parse_prefix(string)
+                    if string.startswith(']'):
+                        return Formula(root, var, statement), string[1:]
+            elif string.startswith('('):
+                arguments = []
+                string = string[1:]
+                while string and string[0] != ')':
+                    arg, string = Term._parse_prefix(string)
+                    arguments.append(arg)
+                    if string and string[0] == ',':
+                        string = string[1:]
+                if string:
+                    string = string[1:]
+                return Formula(root, arguments), string
+            elif string.startswith('='):
+                term1 = Term.parse(root)
+                term2, string = Term._parse_prefix(string[1:])
+                return Formula('=', [term1, term2]), string
+            else:
+                raise ValueError("Invalid formula prefix")
 
     @staticmethod
     def parse(string: str) -> Formula:
@@ -437,6 +575,9 @@ class Formula:
             A formula whose standard string representation is the given string.
         """
         # Task 7.4b
+        formula, rest = Formula._parse_prefix(string)
+        assert rest == ''
+        return formula
 
     def constants(self) -> Set[str]:
         """Finds all constant names in the current formula.
@@ -445,6 +586,18 @@ class Formula:
             A set of all constant names used in the current formula.
         """
         # Task 7.6a
+        if self.arguments is not None:
+            s = set()
+            for arg in self.arguments:
+                s.update(arg.constants())
+            return s
+        elif self.first is not None:
+            s = self.first.constants()
+            if self.second is not None:
+                s.update(self.second.constants())
+            return s
+        else:
+            return self.statement.constants()
 
     def variables(self) -> Set[str]:
         """Finds all variable names in the current formula.
@@ -453,6 +606,20 @@ class Formula:
             A set of all variable names used in the current formula.
         """
         # Task 7.6b
+        if self.arguments is not None:
+            s = set()
+            for arg in self.arguments:
+                s.update(arg.variables())
+            return s
+        elif self.first is not None:
+            s = self.first.variables()
+            if self.second is not None:
+                s.update(self.second.variables())
+            return s
+        else:
+            s = self.statement.variables()
+            s.add(self.variable)
+            return s
 
     def free_variables(self) -> Set[str]:
         """Finds all variable names that are free in the current formula.
@@ -462,6 +629,20 @@ class Formula:
             only within a scope of a quantification on that variable name.
         """
         # Task 7.6c
+        if self.arguments is not None:
+            s = set()
+            for arg in self.arguments:
+                s.update(arg.variables())
+            return s
+        elif self.first is not None:
+            s = self.first.free_variables()
+            if self.second is not None:
+                s.update(self.second.free_variables())
+            return s
+        else:
+            s = self.statement.free_variables()
+            s.discard(self.variable)
+            return s
 
     def functions(self) -> Set[Tuple[str, int]]:
         """Finds all function names in the current formula, along with their
@@ -472,6 +653,18 @@ class Formula:
             all function names used in the current formula.
         """
         # Task 7.6d
+        if self.arguments is not None:
+            s = set()
+            for arg in self.arguments:
+                s.update(arg.functions())
+            return s
+        elif self.first is not None:
+            s = self.first.functions()
+            if self.second is not None:
+                s.update(self.second.functions())
+            return s
+        else:
+            return self.statement.functions()
 
     def relations(self) -> Set[Tuple[str, int]]:
         """Finds all relation names in the current formula, along with their
@@ -482,6 +675,18 @@ class Formula:
             all relation names used in the current formula.
         """
         # Task 7.6e
+        if self.arguments is not None:
+            if self.root == '=':
+                return set()
+            else:
+                return {(self.root, len(self.arguments))}
+        elif self.first is not None:
+            s = self.first.relations()
+            if self.second is not None:
+                s.update(self.second.relations())
+            return s
+        else:
+            return self.statement.relations()
 
     def substitute(self, substitution_map: Mapping[str, Term],
                    forbidden_variables: AbstractSet[str] = frozenset()) -> \
