@@ -47,7 +47,7 @@ def is_constant(string: str) -> bool:
     Returns:
         ``True`` if the given string is a constant name, ``False`` otherwise.
     """
-    return  (((string[0] >= '0' and string[0] <= '9') or \
+    return len(string) > 0 and (((string[0] >= '0' and string[0] <= '9') or \
               (string[0] >= 'a' and string[0] <= 'e')) and \
              string.isalnum()) or string == '_'
 
@@ -61,7 +61,7 @@ def is_variable(string: str) -> bool:
     Returns:
         ``True`` if the given string is a variable name, ``False`` otherwise.
     """
-    return string[0] >= 'u' and string[0] <= 'z' and string.isalnum()
+    return len(string) > 0 and string[0] >= 'u' and string[0] <= 'z' and string.isalnum()
 
 @lru_cache(maxsize=100) # Cache the return value of is_function
 def is_function(string: str) -> bool:
@@ -73,7 +73,7 @@ def is_function(string: str) -> bool:
     Returns:
         ``True`` if the given string is a function name, ``False`` otherwise.
     """
-    return string[0] >= 'f' and string[0] <= 't' and string.isalnum()
+    return len(string) > 0 and string[0] >= 'f' and string[0] <= 't' and string.isalnum()
 
 @frozen
 class Term:
@@ -506,47 +506,40 @@ class Formula:
         if string.startswith('~'):
             formula, rest = Formula._parse_prefix(string[1:])
             return Formula('~', formula), rest
-        elif string.startswith('('):
+        if string.startswith('('):
             formula1, string = Formula._parse_prefix(string[1:])
-            if string.startswith('&') or string.startswith('|') or string.startswith('->'):
-                op = string[:2] if string.startswith('->') else string[0]
-                string = string[2:] if op == '->' else string[1:]
-                formula2, string = Formula._parse_prefix(string)
-                if string.startswith(')'):
-                    return Formula(op, formula1, formula2), string[1:]
-            else:
-                quant = string[0]
+            if string.startswith('->'):
+                op = '->'
+                string = string[2:]
+            elif string.startswith('&') or string.startswith('|'):
+                op = string[0]
                 string = string[1:]
-                if string.startswith('['):
-                    string = string[1:]
-                    i = 0
-                    while i < len(string) and (string[i].isalnum() or string[i] == '_'):
-                        i += 1
-                    var = string[:i]
-                    string = string[i:]
-                    if string.startswith('['):
-                        formula2, string = Formula._parse_prefix(string)
-                        if string.startswith(']'):
-                            string = string[1:]
-                            if string.startswith(')'):
-                                return Formula(quant, var, formula2), string[1:]
-        else:
-            i = 0
-            while i < len(string) and string[i] not in ' (=~':
+            else:
+                raise ValueError('Invalid formula prefix')
+            formula2, string = Formula._parse_prefix(string)
+            if not string.startswith(')'):
+                raise ValueError('Invalid formula prefix')
+            return Formula(op, formula1, formula2), string[1:]
+        if len(string) > 0 and string[0] in 'AE' and len(string) > 1 and is_variable(string[1:2]):
+            quantifier = string[0]
+            i = 1
+            while i < len(string) and string[i].isalnum():
                 i += 1
-            root = string[:i]
+            variable = string[1:i]
             string = string[i:]
-            if is_quantifier(root):
-                i = 0
-                while i < len(string) and (string[i].isalnum() or string[i] == '_'):
-                    i += 1
-                var = string[:i]
-                string = string[i:]
-                if string.startswith('['):
-                    statement, string = Formula._parse_prefix(string)
-                    if string.startswith(']'):
-                        return Formula(root, var, statement), string[1:]
-            elif string.startswith('('):
+            if string.startswith('['):
+                statement, string = Formula._parse_prefix(string[1:])
+                if not string.startswith(']'):
+                    raise ValueError('Invalid formula prefix')
+                return Formula(quantifier, variable, statement), string[1:]
+            raise ValueError('Invalid formula prefix')
+        if string and string[0].isupper():
+            i = 0
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            relation = string[:i]
+            string = string[i:]
+            if string.startswith('('):
                 arguments = []
                 string = string[1:]
                 while string and string[0] != ')':
@@ -554,15 +547,14 @@ class Formula:
                     arguments.append(arg)
                     if string and string[0] == ',':
                         string = string[1:]
-                if string:
+                if string and string[0] == ')':
                     string = string[1:]
-                return Formula(root, arguments), string
-            elif string.startswith('='):
-                term1 = Term.parse(root)
-                term2, string = Term._parse_prefix(string[1:])
-                return Formula('=', [term1, term2]), string
-            else:
-                raise ValueError("Invalid formula prefix")
+                return Formula(relation, arguments), string
+        term1, string = Term._parse_prefix(string)
+        if string.startswith('='):
+            term2, string = Term._parse_prefix(string[1:])
+            return Formula('=', [term1, term2]), string
+        raise ValueError('Invalid formula prefix')
 
     @staticmethod
     def parse(string: str) -> Formula:
